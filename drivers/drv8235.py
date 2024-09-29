@@ -43,11 +43,11 @@ class BridgeControl:
     """H-bridge PWM control states and descriptors. Bit order: IN2 IN1"""
 
     COAST   = 0b00  # Standby/Coast function (Hi-Z)
-    FORWARD = 0b01  # Forward function
-    REVERSE = 0b10  # Reverse function
+    REVERSE = 0b01  # Reverse function
+    FORWARD = 0b10  # Forward function
     BRAKE   = 0b11  # Brake function
 
-    DESCRIPTOR = ["COAST", "FORWARD", "REVERSE", "BRAKE"]
+    DESCRIPTOR = ["COAST", "REVERSE", "FORWARD", "BRAKE"]
 
 
 class Faults:
@@ -77,22 +77,32 @@ class DRV8235(Driver):
         """Instantiate DRV8235. Set output voltage to 0.0, place into STANDBY
         mode, and reset all fault status flags."""
         self.i2c_device = I2CDevice(i2c_bus, address)
-        self._vset = 0x00
-        self._in_x = BridgeControl.COAST
+        self._i2c_bc = True
+        self._pmode = True
+        self._set_dir = BridgeControl.COAST
+        self._reg_ctrl = 0x2 # Sets to voltage regulation
         # Clear all fault status flags
         self.clear_faults()
 
         super().__init__()
 
     # DEFINE I2C DEVICE BITS, NYBBLES, BYTES, AND REGISTERS
-    _in_x = RWBits(2, _CONTROL, 0, 1, False)  # Output state; IN2, IN1
-    _vset = RWBits(6, _CONTROL, 2, 1, False)  # DAC output voltage (raw)
-    _fault = ROBit(_FAULT, 0, 1, False)  # Any fault condition
-    _ocp = ROBit(_FAULT, 1, 1, False)  # Overcurrent event
-    _uvlo = ROBit(_FAULT, 2, 1, False)  # Undervoltage lockout
-    _ots = ROBit(_FAULT, 3, 1, False)  # Overtemperature condition
-    _ilimit = ROBit(_FAULT, 4, 1, False)  # Extended current limit event
-    _clear = RWBit(_FAULT, 7, 1, False)  # Clears fault status flag bits
+    _clear = RWBit(_CONFIG0, 1, 1, False)  # Clears fault status flag bits
+    _i2c_bc = RWBit(_CONFIG4, 2, 1, False) # Sets Bridge Control to I2C
+    _pmode = RWBit(_CONFIG4, 3, 1, False) # Sets programming mode to PWM
+    _set_dir = RWBits (2, _CONFIG4, 0, 1, False) # Sets direction of h-bridge IN1, IN2
+    _reg_ctrl = RWBits (2, _REG_CTRL0, 3, 1, False) # Sets current/voltage regulation scheme
+
+    # _vset = RWBits(6, _CONTROL, 2, 1, False)  # DAC output voltage (raw)
+    # _fault = ROBit(_FAULT, 0, 1, False)  # Any fault condition
+    # _ocp = ROBit(_FAULT, 1, 1, False)  # Overcurrent event
+    # _uvlo = ROBit(_FAULT, 2, 1, False)  # Undervoltage lockout
+    # _ots = ROBit(_FAULT, 3, 1, False)  # Overtemperature condition
+    # _ilimit = ROBit(_FAULT, 4, 1, False)  # Extended current limit event
+    
+    def clear_faults(self):
+        """Clears all fault conditions."""
+        self._clear = True  # Clear all fault status flags
 
     # def throttle(self):
     #     """Current motor speed, ranging from -1.0 (full speed reverse) to
@@ -211,10 +221,6 @@ class DRV8235(Driver):
     #             faults.append(Faults.DESCRIPTOR[4])
     #     return self._fault, faults
 
-    # def clear_faults(self):
-    #     """Clears all fault conditions."""
-    #     self._clear = True  # Clear all fault status flags
-
     # def __enter__(self):
     #     return self
 
@@ -297,18 +303,3 @@ class DRV8235(Driver):
     #         self.errors_present = True
 
     #     return error_list 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
- 
