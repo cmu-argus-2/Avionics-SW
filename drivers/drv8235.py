@@ -26,7 +26,6 @@ _RC_CTRL7     = const(0x18)   # RW
 _RC_CTRL8     = const(0x19)   # RW
 
 
-
 class VoltageAdapter:
     """Output voltage calculator."""
 
@@ -79,227 +78,243 @@ class DRV8235(Driver):
         self.i2c_device = I2CDevice(i2c_bus, address)
         self._i2c_bc = True
         self._pmode = True
-        self._set_dir = BridgeControl.COAST
+        self._dir = BridgeControl.COAST
         self._reg_ctrl = 0x2 # Sets to voltage regulation
+        self._wset_vset = 0 # Sets initial voltage to 0
         # Clear all fault status flags
         self.clear_faults()
 
         super().__init__()
 
-    # DEFINE I2C DEVICE BITS, NYBBLES, BYTES, AND REGISTERS
+
+    # DEFINE I2C DEVICE BITS AND REGISTERS
     _clear = RWBit(_CONFIG0, 1, 1, False)  # Clears fault status flag bits
     _i2c_bc = RWBit(_CONFIG4, 2, 1, False) # Sets Bridge Control to I2C
     _pmode = RWBit(_CONFIG4, 3, 1, False) # Sets programming mode to PWM
-    _set_dir = RWBits (2, _CONFIG4, 0, 1, False) # Sets direction of h-bridge IN1, IN2
+    _dir = RWBits (2, _CONFIG4, 0, 1, False) # Sets direction of h-bridge IN1, IN2
     _reg_ctrl = RWBits (2, _REG_CTRL0, 3, 1, False) # Sets current/voltage regulation scheme
+    _fault = ROBit(_FAULT_STATUS, 7, 1, False)  # Any fault condition
+    _stall = ROBit(_FAULT_STATUS, 5, 1, False) # Stall event
+    _ocp = ROBit (_FAULT_STATUS, 4, 1, False) # Overcurrent event
+    _ovp = ROBit (_FAULT_STATUS, 3, 1, False) # Overvoltage event
+    _tsd = ROBit (_FAULT_STATUS, 2, 1, False) # Overtemperature event
+    _npor = ROBit (_FAULT_STATUS, 1, 1, False) # Undervoltage event
+    _wset_vset = RWBits (8, REG_CTRL1, 0, 1, False) #Sets target motor voltage
 
-    # _vset = RWBits(6, _CONTROL, 2, 1, False)  # DAC output voltage (raw)
-    # _fault = ROBit(_FAULT, 0, 1, False)  # Any fault condition
-    # _ocp = ROBit(_FAULT, 1, 1, False)  # Overcurrent event
-    # _uvlo = ROBit(_FAULT, 2, 1, False)  # Undervoltage lockout
-    # _ots = ROBit(_FAULT, 3, 1, False)  # Overtemperature condition
-    # _ilimit = ROBit(_FAULT, 4, 1, False)  # Extended current limit event
-    
+
     def clear_faults(self):
         """Clears all fault conditions."""
         self._clear = True  # Clear all fault status flags
 
-    # def throttle(self):
-    #     """Current motor speed, ranging from -1.0 (full speed reverse) to
-    #     +1.0 (full speed forward), or ``None`` (controller off). If ``None``,
-    #     the H-bridge is set to high-impedance (coasting). If ``0.0``, the
-    #     H-bridge is set to cause braking."""
-    #     if self.bridge_control[0] == BridgeControl.COAST:
-    #         return None
-    #     if self.bridge_control[0] == BridgeControl.BRAKE:
-    #         return 0.0
-    #     if self.bridge_control[0] == BridgeControl.REVERSE:
-    #         return -1 * round(self._vset / 0x3F, 3)
-    #     return round(self._vset / 0x3F, 3)
 
-    # def set_throttle(self, new_throttle):
-    #     if new_throttle is None:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.COAST
-    #         return
-    #     # Constrain throttle value
-    #     self._throttle_normalized = min(max(new_throttle, -1.0), +1.0)
-    #     if new_throttle < 0:
-    #         self._vset = int(abs(new_throttle * 0x3F))
-    #         self._in_x = BridgeControl.REVERSE
-    #     elif new_throttle > 0:
-    #         self._vset = int(new_throttle * 0x3F)
-    #         self._in_x = BridgeControl.FORWARD
-    #     else:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.BRAKE
-    #     return
+    def throttle(self):
+        """Current motor voltage, ranging from -1.0 (full speed reverse) to
+        +1.0 (full speed forward), or ``None`` (controller off). If ``None``,
+        the H-bridge is set to high-impedance (coasting). If ``0.0``, the
+        H-bridge is set to cause braking."""
+        if self.bridge_control[0] == BridgeControl.COAST:
+            return None
+        if self.bridge_control[0] == BridgeControl.BRAKE:
+            return 0.0
+        if self.bridge_control[0] == BridgeControl.REVERSE:
+            return -1 * round(self._wset_vset / 0xFF, 3)
+        return round(self._wset_vset / 0xFF, 3)
 
-    # def throttle_volts(self):
-    #     """Current motor speed, ranging from -5.06 volts (full speed reverse) to
-    #     +5.06 volts (full speed forward), or ``None`` (controller off). If ``None``,
-    #     the H-bridge is set to high-impedance (coasting). If ``0.0``, the
-    #     H-bridge is set to cause braking."""
-    #     if self.bridge_control[0] == BridgeControl.COAST:
-    #         return None
-    #     if self.bridge_control[0] == BridgeControl.BRAKE:
-    #         return 0.0
-    #     if self.bridge_control[0] == BridgeControl.REVERSE:
-    #         return -1 * VoltageAdapter.index_to_voltage(self, self._vset)
-    #     return VoltageAdapter.index_to_voltage(self, self._vset)
 
-    # def set_throttle_volts(self, new_throttle_volts):
-    #     if new_throttle_volts is None:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.COAST
-    #         return
-    #     # Constrain throttle voltage value
-    #     new_throttle_volts = min(max(new_throttle_volts, -5.1), +5.1)
-    #     if new_throttle_volts < 0:
-    #         self._vset = VoltageAdapter.voltage_to_index(self, abs(new_throttle_volts))
-    #         self._in_x = BridgeControl.REVERSE
-    #     elif new_throttle_volts > 0:
-    #         self._vset = VoltageAdapter.voltage_to_index(self, new_throttle_volts)
-    #         self._in_x = BridgeControl.FORWARD
-    #     else:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.BRAKE
-    #     return
+    def set_throttle(self, new_throttle):
+        if new_throttle is None:
+            self._wset_vset = 0
+            self._dir = BridgeControl.COAST
+            return
+        # Constrain throttle value
+        self._throttle_normalized = min(max(new_throttle, -1.0), +1.0)
+        if new_throttle < 0:
+            self._wset_vset = int(abs(new_throttle * 0xFF))
+            self._dir = BridgeControl.REVERSE
+        elif new_throttle > 0:
+            self._wset_vset = int(new_throttle * 0xFF)
+            self._dir = BridgeControl.FORWARD
+        else:
+            self._wset_vset = 0
+            self._dir = BridgeControl.BRAKE
+        return
+    
 
-    # def throttle_raw(self):
-    #     """Current motor speed, 6-bit VSET byte value, ranging from -63 (full speed reverse) to
-    #     63 (full speed forward), or ``None`` (controller off). If ``None``,
-    #     the H-bridge is set to high-impedance (coasting). If ``0``, the
-    #     H-bridge is set to cause braking."""
-    #     if self.bridge_control[0] == BridgeControl.COAST:
-    #         return None
-    #     if self.bridge_control[0] == BridgeControl.BRAKE:
-    #         return 0
-    #     if self.bridge_control[0] == BridgeControl.REVERSE:
-    #         return -1 * self._vset
-    #     return self._vset
+    def throttle_volts(self):
+        """Current motor voltage, ranging from -42.7 volts (full speed reverse) to
+        +42.7 volts (full speed forward), or ``None`` (controller off). If ``None``,
+        the H-bridge is set to high-impedance (coasting). If ``0.0``, the
+        H-bridge is set to cause braking."""
+        if self.bridge_control[0] == BridgeControl.COAST:
+            return None
+        if self.bridge_control[0] == BridgeControl.BRAKE:
+            return 0.0
+        if self.bridge_control[0] == BridgeControl.REVERSE:
+            return -1 * VoltageAdapter.index_to_voltage(self, self._wset_vset)
+        return VoltageAdapter.index_to_voltage(self, self._wset_vset)
 
-    # def set_throttle_raw(self, new_throttle_raw):
-    #     if new_throttle_raw is None:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.COAST
-    #         return
-    #     # Constrain raw throttle value
-    #     new_throttle_raw = min(max(new_throttle_raw, -63), 63)
-    #     if new_throttle_raw < 0:
-    #         self._vset = new_throttle_raw
-    #         self._in_x = BridgeControl.REVERSE
-    #     elif new_throttle_raw > 0:
-    #         self._vset = new_throttle_raw
-    #         self._in_x = BridgeControl.FORWARD
-    #     else:
-    #         self._vset = 0
-    #         self._in_x = BridgeControl.BRAKE
-    #     return
 
-    # @property
-    # def bridge_control(self):
-    #     """Motor driver bridge status. Returns the 2-bit bridge control integer
-    #     value and corresponding description string."""
-    #     return self._in_x, BridgeControl.DESCRIPTOR[self._in_x]
+    def set_throttle_volts(self, new_throttle_volts):
+        if new_throttle_volts is None:
+            self._wset_vset = 0
+            self._dir = BridgeControl.COAST
+            return
+        # Constrain throttle voltage value
+        new_throttle_volts = min(max(new_throttle_volts, -42.7), +42.7)
+        if new_throttle_volts < 0:
+            self._wset_vset = VoltageAdapter.voltage_to_index(self, abs(new_throttle_volts))
+            self._dir = BridgeControl.REVERSE
+        elif new_throttle_volts > 0:
+            self._wset_vset = VoltageAdapter.voltage_to_index(self, new_throttle_volts)
+            self._dir = BridgeControl.FORWARD
+        else:
+            self._wset_vset = 0
+            self._dir = BridgeControl.BRAKE
+        return
 
-    # @property
-    # def fault(self):
-    #     """Motor driver fault register status. Returns state of FAULT flag and
-    #     a list of activated fault flag descriptors. FAULT flag is ``True`` if
-    #     one or more fault register flags are ``True``."""
-    #     faults = []
-    #     if self._fault:
-    #         faults.append(Faults.DESCRIPTOR[0])
-    #         if self._ocp:
-    #             faults.append(Faults.DESCRIPTOR[1])
-    #         if self._uvlo:
-    #             faults.append(Faults.DESCRIPTOR[2])
-    #         if self._ots:
-    #             faults.append(Faults.DESCRIPTOR[3])
-    #         if self._ilimit:
-    #             faults.append(Faults.DESCRIPTOR[4])
-    #     return self._fault, faults
 
-    # def __enter__(self):
-    #     return self
+    def throttle_raw(self):
+        """Current motor voltage, 8-bit WSET_VSET byte value, ranging from -255 (full speed reverse) to
+        255 (full speed forward), or ``None`` (controller off). If ``None``,
+        the H-bridge is set to high-impedance (coasting). If ``0``, the
+        H-bridge is set to cause braking."""
+        if self.bridge_control[0] == BridgeControl.COAST:
+            return None
+        if self.bridge_control[0] == BridgeControl.BRAKE:
+            return 0
+        if self.bridge_control[0] == BridgeControl.REVERSE:
+            return -1 * self._wset_vset
+        return self._wset_vset
 
-    # def __exit__(self, exception_type, exception_value, traceback):
-    #     self._vset = 0
-    #     self._in_x = BridgeControl.STANDBY
+    def set_throttle_raw(self, new_throttle_raw):
+        if new_throttle_raw is None:
+            self._wset_vset = 0
+            self._dir = BridgeControl.COAST
+            return
+        # Constrain raw throttle value
+        new_throttle_raw = min(max(new_throttle_raw, -255), 255)
+        if new_throttle_raw < 0:
+            self._wset_vset = new_throttle_raw
+            self._dir = BridgeControl.REVERSE
+        elif new_throttle_raw > 0:
+            self._wset_vset = new_throttle_raw
+            self._dir = BridgeControl.FORWARD
+        else:
+            self._wset_vset = 0
+            self._dir = BridgeControl.BRAKE
+        return
 
-    # """
-    # ----------------------- HANDLER METHODS -----------------------
-    # """
 
-    # @property
-    # def get_flags(self):
-    #     flags = {}
-    #     if self._fault:
-    #         if self._ocp:
-    #             flags["ocp"] = None
-    #         if self._uvlo:
-    #             flags["uvlo"] = None
-    #         if self._ots:
-    #             flags["ots"] = None
-    #         if self._ilimit:
-    #             flags["ilimit"] = None
-    #     return flags
+    @property
+    def bridge_control(self):
+        """Motor driver bridge status. Returns the 2-bit bridge control integer
+        value and corresponding description string."""
+        return self._dir, BridgeControl.DESCRIPTOR[self._dir]
 
-    # ######################### DIAGNOSTICS #########################
-    # def __check_for_faults(self) -> list[int]:
-    #     """_check_for_faults: Checks for any device faluts returned by fault function in DRV8830
 
-    #     :return: List of errors that exist in the fault register
-    #     """
-    #     faults_flag, faults = self.fault
+    @property
+    def fault(self):
+        """Motor driver fault register status. Returns state of FAULT flag and
+        a list of activated fault flag descriptors. FAULT flag is ``True`` if
+        one or more fault register flags are ``True``."""
+        faults = []
+        if self._fault:
+            faults.append(Faults.DESCRIPTOR[0])
+            if self._ocp:
+                faults.append(Faults.DESCRIPTOR[1])
+            if self._uvlo:
+                faults.append(Faults.DESCRIPTOR[2])
+            if self._ots:
+                faults.append(Faults.DESCRIPTOR[3])
+            if self._ilimit:
+                faults.append(Faults.DESCRIPTOR[4])
+        return self._fault, faults
 
-    #     if not faults_flag:
-    #         return [Errors.NOERROR]
 
-    #     errors: list[int] = []
+    def __enter__(self):
+        return self
 
-    #     if "OCP" in faults:
-    #         errors.append(Errors.DRV8830_OVERCURRENT_EVENT)
-    #     if "UVLO" in faults:
-    #         errors.append(Errors.DRV8830_UNDERVOLTAGE_LOCKOUT)
-    #     if "OTS" in faults:
-    #         errors.append(Errors.DRV8830_OVERTEMPERATURE_CONDITION)
-    #     if "ILIMIT" in faults:
-    #         errors.append(Errors.DRV8830_EXTENDED_CURRENT_LIMIT_EVENT)
 
-    #     self.clear_faults()
+    def __exit__(self, exception_type, exception_value, traceback):
+        self._wset_vset = 0
+        self._dir = BridgeControl.STANDBY
 
-    #     return errors
+    """
+    ----------------------- HANDLER METHODS -----------------------
+    """
 
-    # def __throttle_tests(self) -> int:
-    #     """_throttle_tests: Checks for any throttle errors in DRV8830, whether the returned reading is
-    #     outside of the set range indicated in the driver file
+    @property
+    def get_flags(self):
+        flags = {}
+        if self._fault:
+            if self._stall:
+                flags["stall"] = None
+            if self._ocp:
+                flags["ocp"] = None
+            if self._ovp:
+                flags["ovp"] = None
+            if self._tsd: 
+                flags["tsd"] = None
+            if self._npor:
+                flags["npor"] = None
+        return flags
 
-    #     :return: true if test passes, false if fails
-    #     """
-    #     throttle_volts_val = self.throttle_volts()
-    #     if throttle_volts_val is not None:
-    #         if (throttle_volts_val < -5.06) or (throttle_volts_val > 5.06):
-    #             return Errors.DRV8830_THROTTLE_OUTSIDE_RANGE
+    ######################### DIAGNOSTICS #########################
+    def __check_for_faults(self) -> list[int]:
+        """_check_for_faults: Checks for any device faluts returned by fault function in DRV8235
 
-    #     throttle_raw_val = self.throttle_raw()
-    #     if throttle_raw_val is not None:
-    #         if (throttle_raw_val < -63) or (throttle_raw_val > 63):
-    #             return Errors.DRV8830_THROTTLE_OUTSIDE_RANGE
+        :return: List of errors that exist in the fault register
+        """
+        faults_flag, faults = self.fault
 
-    #     return Errors.NOERROR
+        if not faults_flag:
+            return [Errors.NOERROR]
 
-    # def run_diagnostics(self) -> list[int] | None:
-    #     """run_diagnostic_test: Run all tests for the component"""
-    #     error_list: list[int] = []
+        errors: list[int] = []
 
-    #     error_list = self.__check_for_faults()
-    #     error_list.append(self.__throttle_tests())
+        if "STALL" in faults:
+            errors.append(Errors.DRV8235_STALL_EVENT)
+        if "OCP" in faults:
+            errors.append(Errors.DRV8235_OVERCURRENT_LOCKOUT)
+        if "OVP" in faults:
+            errors.append(Errors.DRV8235_OVERVOLTAGE_CONDITION)
+        if "TSD" in faults:
+            errors.append(Errors.DRV8235_OVERTEMPERATURE_EVENT)
+        if "NPOR" in faults: 
+            errors.append(Errors.DRV8235_UNDERVOLTAGE_EVENT)
 
-    #     error_list = list(set(error_list))
+        self.clear_faults()
 
-    #     if Errors.NOERROR not in error_list:
-    #         self.errors_present = True
+        return errors
 
-    #     return error_list 
+    def __throttle_tests(self) -> int:
+        """_throttle_tests: Checks for any throttle errors in DRV8235, whether the returned reading is
+        outside of the set range indicated in the driver file
+
+        :return: true if test passes, false if fails
+        """
+        throttle_volts_val = self.throttle_volts()
+        if throttle_volts_val is not None:
+            if (throttle_volts_val < -42.67) or (throttle_volts_val > 42.67):
+                return Errors.DRV8235_THROTTLE_OUTSIDE_RANGE
+
+        throttle_raw_val = self.throttle_raw()
+        if throttle_raw_val is not None:
+            if (throttle_raw_val < -255) or (throttle_raw_val > 255):
+                return Errors.DRV8235_THROTTLE_OUTSIDE_RANGE
+
+        return Errors.NOERROR
+
+    def run_diagnostics(self) -> list[int] | None:
+        """run_diagnostic_test: Run all tests for the component"""
+        error_list: list[int] = []
+
+        error_list = self.__check_for_faults()
+        error_list.append(self.__throttle_tests())
+
+        error_list = list(set(error_list))
+
+        if Errors.NOERROR not in error_list:
+            self.errors_present = True
+
+        return error_list 
