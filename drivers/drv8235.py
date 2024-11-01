@@ -1,6 +1,10 @@
+import sys
+import busio
+from board import *
+sys.path.append("/home/sebastian/FSW-mainboard/flight")
 from adafruit_bus_device.i2c_device import I2CDevice
 from adafruit_register.i2c_bit import ROBit, RWBit
-from adafruit_register.i2c_bits import RWBits
+from adafruit_register.i2c_bits import RWBits, ROBits
 from hal.drivers.middleware.errors import Errors
 from hal.drivers.middleware.generic_driver import Driver
 from micropython import const
@@ -35,7 +39,7 @@ class VoltageAdapter:
 
     def voltage_to_index(self, volts):
         """Convert a voltage to nearest index value."""
-        return volts * (255/42.67)
+        return round(volts * (255/42.67))
 
 
 class BridgeControl:
@@ -72,15 +76,19 @@ class DRV8235(Driver):
     :param i2c_bus: The microcontroller I2C interface bus pins.
     :param address: The I2C address of the DRV8235 motor controller."""
 
-    def __init__(self, i2c_bus, address=0x60):
+    def __init__(self, i2c_bus, address=0x34):
         """Instantiate DRV8235. Set output voltage to 0.0, place into STANDBY
         mode, and reset all fault status flags."""
         self.i2c_device = I2CDevice(i2c_bus, address)
         self._i2c_bc = True
         self._pmode = True
         self._dir = BridgeControl.COAST
-        self._reg_ctrl = 0x2 # Sets to voltage regulation
+        self._reg_ctrl = 0x3 # Sets to voltage regulation
         self._wset_vset = 0 # Sets initial voltage to 0
+        self._int_vref = True
+        self._inv_r_scale = 0x3
+        self._inv_r = 82
+        self._en_out = True
         # Clear all fault status flags
         self.clear_faults()
 
@@ -91,6 +99,7 @@ class DRV8235(Driver):
     _clear = RWBit(_CONFIG0, 1, 1, False)  # Clears fault status flag bits
     _i2c_bc = RWBit(_CONFIG4, 2, 1, False) # Sets Bridge Control to I2C
     _pmode = RWBit(_CONFIG4, 3, 1, False) # Sets programming mode to PWM
+    _en_out = RWBit(_CONFIG0, 7, 1, False) # Enables output
     _dir = RWBits (2, _CONFIG4, 0, 1, False) # Sets direction of h-bridge IN1, IN2
     _reg_ctrl = RWBits (2, _REG_CTRL0, 3, 1, False) # Sets current/voltage regulation scheme
     _fault = ROBit(_FAULT_STATUS, 7, 1, False)  # Any fault condition
@@ -99,8 +108,13 @@ class DRV8235(Driver):
     _ovp = ROBit (_FAULT_STATUS, 3, 1, False) # Overvoltage event
     _tsd = ROBit (_FAULT_STATUS, 2, 1, False) # Overtemperature event
     _npor = ROBit (_FAULT_STATUS, 1, 1, False) # Undervoltage event
-    _wset_vset = RWBits (8, REG_CTRL1, 0, 1, False) #Sets target motor voltage
-
+    _wset_vset = RWBits (8, _REG_CTRL1, 0, 1, False) #Sets target motor voltage
+    _vmtr = ROBits(8, _REG_STATUS1, 0, 1, False)
+    _imtr = ROBits (8, _REG_STATUS2, 0, 1, False)
+    _duty_read = ROBits(6, _REG_STATUS3, 0, 1, False)
+    _int_vref = RWBit (_CONFIG3, 4, 1, False)
+    _inv_r = RWBits (8, _RC_CTRL3, 0, 1, False)
+    _inv_r_scale = RWBits(2, _RC_CTRL2, 6, 1, False)
 
     def clear_faults(self):
         """Clears all fault conditions."""
@@ -317,4 +331,13 @@ class DRV8235(Driver):
         if Errors.NOERROR not in error_list:
             self.errors_present = True
 
-        return error_list 
+        return error_list
+
+if __name__ == '__main__':
+	i2c_bus = busio.I2C(SCL, SDA)
+	print("I2C ok!")
+	motor_driver = DRV8235(i2c_bus, address=0x34)
+	
+	motor_driver.set_throttle_volts(1)
+	while(True):
+ 		print(motor_driver._wset_vset)
