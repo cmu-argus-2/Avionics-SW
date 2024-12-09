@@ -1,5 +1,6 @@
 import sys
 import busio
+import time
 from board import *
 #sys.path.append("/home/sebastian/FSW-mainboard/flight")
 from adafruit_bus_device.i2c_device import I2CDevice
@@ -79,11 +80,7 @@ class DRV8235():
     def __init__(self, i2c_bus, address=0x34):
         """Instantiate DRV8235. Set output voltage to 0.0, place into STANDBY
         mode, and reset all fault status flags."""
-        print("yar")
-        with busio.I2C(SCL, SDA) as i2c:
-            self.i2c_device = I2CDevice(i2c, address)
-        #self.i2c_device = I2CDevice(i2c_bus, address)
-        print("fudge")
+        self.i2c_device = I2CDevice(i2c_bus, address)
         self._i2c_bc = True
         self._pmode = True
         self._dir = BridgeControl.COAST
@@ -207,7 +204,7 @@ class DRV8235():
         # Constrain raw throttle value
         new_throttle_raw = min(max(new_throttle_raw, -255), 255)
         if new_throttle_raw < 0:
-            self._wset_vset = new_throttle_raw
+            self._wset_vset = abs(new_throttle_raw)
             self._dir = BridgeControl.REVERSE
         elif new_throttle_raw > 0:
             self._wset_vset = new_throttle_raw
@@ -253,7 +250,8 @@ class DRV8235():
 
     def __exit__(self, exception_type, exception_value, traceback):
         self._wset_vset = 0
-        self._dir = BridgeControl.STANDBY
+        self._dir = BridgeControl.COAST
+        #there's no STANDBY mode: i'm guessing this is supposed to be like "COAST"?
 
     """
     ----------------------- HANDLER METHODS -----------------------
@@ -336,11 +334,103 @@ class DRV8235():
 
 #         return error_list
 
+def testGetSetThrottle(motor_driver, direction):
+    print("Testing set/get throttle fxn...")
+    time.sleep(1)
+    #Accelerate from stop to full speed
+    print("Accelerating...")
+    time.sleep(0.25)
+    for i in range(0, 101, 5):
+        motor_driver.set_throttle(i / 100 * direction)
+        print("Input, Mode, Output:", i / 100 * direction, motor_driver.bridge_control[1], motor_driver.throttle())
+        time.sleep(0.5)
+    time.sleep(1)  # Hold at full speed
+
+    #Deaccelerate from full speed to stop
+    print("Deccelerating...")
+    time.sleep(0.25)
+    for i in range(100, -1, -5):
+        motor_driver.set_throttle(i / 100 * direction)
+        print("Input, Mode, Output:", i / 100 * direction, motor_driver.bridge_control[1], motor_driver.throttle())
+        time.sleep(0.5)
+
+    time.sleep(1)
+
+    print("Test coasting mode for get/set throttle")
+    time.sleep(1)
+    motor_driver.set_throttle(None)
+    print("Input, Mode, Output:", None, motor_driver.bridge_control[1], motor_driver.throttle())
+    time.sleep(0.5)
+
+def testGetSetThrottleVolts(motor_driver, direction):
+    print("Test get/set throttle_volt fxn...")
+    time.sleep(1)
+
+    print("Accelerating...")
+    time.sleep(0.25)
+    for i in range(0, 101, 5):
+        motor_driver.set_throttle_volts((i / 100) * 43 * direction)  #scale to volt range ish
+        print("Input, Mode, Output:", (i / 100) * 43 * direction, motor_driver.bridge_control[1], motor_driver.throttle_volts())
+        time.sleep(0.5)
+    time.sleep(1)
+
+    print("Deccelerating...")
+    time.sleep(0.25)
+    for i in range(100, -1, -5):
+        motor_driver.set_throttle_volts((i / 100) * 43 * direction)
+        print("Input, Mode, Output:", (i / 100) * 43 * direction, motor_driver.bridge_control[1], motor_driver.throttle_volts())
+        time.sleep(0.5)
+    time.sleep(1)
+
+    print("Test coasting mode for get/set throttle_volt")
+    time.sleep(1)
+    motor_driver.set_throttle_volts(None)
+    print("Input, Mode, Output:", None, motor_driver.bridge_control[1], motor_driver.throttle_volts())
+    time.sleep(0.5)
+
+def testGetSetThrottleRaw(motor_driver, direction):
+    print("Testing set/get throttle_raw fxn...")
+    time.sleep(1)
+    #Accelerate from stop to full speed
+    print("Accelerating...")
+    time.sleep(0.25)
+    for i in range(0, 101, 5):
+        motor_driver.set_throttle_raw(int((i / 100) * 255 * direction))
+        print("Input, Mode, Output:", int((i / 100) * 255 * direction), motor_driver.bridge_control[1], motor_driver.throttle_raw())
+        time.sleep(0.5)
+    time.sleep(1)  # Hold at full speed
+
+    #Deaccelerate from full speed to stop
+    print("Deccelerating...")
+    time.sleep(0.25)
+    for i in range(100, -1, -5):
+        motor_driver.set_throttle_raw(int((i / 100) * 255 * direction))
+        print("Input, Mode, Output:", int((i / 100) * 255 * direction), motor_driver.bridge_control[1], motor_driver.throttle_raw())
+        time.sleep(0.5)
+
+    time.sleep(1)
+
+    print("Test coasting mode for get/set throttle_raw")
+    time.sleep(1)
+    motor_driver.set_throttle_raw(None)
+    print("Input, Mode, Output:", None, motor_driver.bridge_control[1], motor_driver.throttle_raw())
+    time.sleep(0.5)
+
 if __name__ == '__main__':
-	i2c_bus = busio.I2C(SCL, SDA)
-	print("I2C ok!")
-	motor_driver = DRV8235(i2c_bus, address=0x34)
-	
-	motor_driver.set_throttle_volts(1)
-	while(True):
- 		print(motor_driver._wset_vset)
+    i2c_bus = busio.I2C(SCL, SDA)
+    print("I2C ok!")
+    motor_driver = DRV8235(i2c_bus, address=0x34)
+
+    direction = 1  # Set initial direction: forward; -1 for reverse
+
+    while(True):
+
+        testGetSetThrottle(motor_driver, direction)
+        testGetSetThrottleVolts(motor_driver, direction)
+        testGetSetThrottleRaw(motor_driver, direction)
+
+        print("Faults:", motor_driver.fault)
+
+        direction = direction * -1  # Change motor direction
+
+        time.sleep(5)
